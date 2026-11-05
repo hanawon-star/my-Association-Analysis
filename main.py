@@ -1,5 +1,5 @@
 import re
-from collections import Counter, defaultdict
+from collections import Counter
 from itertools import combinations
 import pandas as pd
 import plotly.express as px
@@ -71,11 +71,21 @@ def load_and_process_data():
         len(all_items),
         unique_pairs_count,
         sorted(list(all_items)),
+        item_counts,
+        pair_counts,
     )
 
 
 # 데이터 로드
-rules_df, total_days, num_items, num_pairs, item_list = load_and_process_data()
+(
+    rules_df,
+    total_days,
+    num_items,
+    num_pairs,
+    item_list,
+    item_counts,
+    pair_counts,
+) = load_and_process_data()
 
 st.title("🍚 송탄고 급식 메뉴 연관 규칙 분석")
 
@@ -96,21 +106,32 @@ sort_option = st.sidebar.radio(
     "정렬 기준 선택", options=["향상도 순", "신뢰도 순", "동시 순"]
 )
 
+# 최소 동시 일수 슬라이더 추가
+min_cooccur = st.sidebar.slider(
+    "최소 동시 일수 설정", min_value=1, max_value=10, value=1, step=1
+)
+
 sort_column_map = {"향상도 순": "향상도", "신뢰도 순": "신뢰도", "동시 순": "동시"}
 
-# 메뉴 필터링 적용
+# 필터링 적용 (메뉴 선택 및 최소 동시 일수)
+filtered_df = rules_df[rules_df["동시"] >= min_cooccur].copy()
+
 if selected_menu != "전체":
-    filtered_df = rules_df[
-        (rules_df["조건"] == selected_menu) | (rules_df["결과"] == selected_menu)
+    filtered_df = filtered_df[
+        (filtered_df["조건"] == selected_menu)
+        | (filtered_df["결과"] == selected_menu)
     ].copy()
-else:
-    filtered_df = rules_df.copy()
 
 # 정렬 적용
 sort_col = sort_column_map[sort_option]
 filtered_df = filtered_df.sort_values(
     by=[sort_col, "동시"], ascending=[False, False]
 ).reset_index(drop=True)
+
+# 남은 규칙 수 한 줄 표시
+st.write(
+    f"🔍 **필터링 후 남은 규칙 수:** `{len(filtered_df)}`개 (최소 동시 일수: {min_cooccur}일 이상)"
+)
 
 # Plotly 가로 막대그래프 (향상도 상위 10개)
 st.subheader("📊 향상도 상위 10개 규칙")
@@ -134,3 +155,46 @@ else:
 # 규칙 표 출력
 st.subheader("📋 연관 규칙 목록")
 st.dataframe(filtered_df, use_container_width=True)
+
+st.divider()
+
+# 함께 나온 적 없는 짝 화면 영역
+st.subheader("🚫 함께 나온 적 없는 짝 검색")
+
+unpaired_target_menu = st.selectbox(
+    "함께 나온 적 없는 메뉴를 검색할 대상 메뉴를 선택하세요:",
+    options=item_list,
+    key="unpaired_menu_select",
+)
+
+target_days = item_counts[unpaired_target_menu]
+st.write(
+    f"📌 **'{unpaired_target_menu}'** 메뉴가 나온 총 일수: **{target_days}일**"
+)
+
+# 해당 메뉴와 단 한 번도 함께 나오지 않은 메뉴 탐색 (혼자서는 10일 이상 나온 메뉴 대상)
+unpaired_list = []
+for other_item in item_list:
+    if other_item == unpaired_target_menu:
+        continue
+
+    # 같이 나온 횟수 검사
+    together_count = pair_counts.get((unpaired_target_menu, other_item), 0)
+    other_item_days = item_counts[other_item]
+
+    if together_count == 0 and other_item_days >= 10:
+        unpaired_list.append(
+            {"메뉴": other_item, "단독 등장 일수": other_item_days}
+        )
+
+unpaired_df = pd.DataFrame(unpaired_list)
+
+if not unpaired_df.empty:
+    unpaired_df = unpaired_df.sort_values(
+        by="단독 등장 일수", ascending=False
+    ).reset_index(drop=True)
+    st.dataframe(unpaired_df, use_container_width=True)
+else:
+    st.info(
+        f"'{unpaired_target_menu}' 메뉴와 함께 나온 적이 없으면서 단독으로 10일 이상 나온 메뉴가 없습니다."
+    )
